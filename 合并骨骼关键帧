@@ -318,7 +318,7 @@ class OBJECT_OT_MergeKeyframes(Operator):
         # 重置场景结束帧
         get_armature_last_frame(armature1)
         last_frame = get_armature_last_frame(armature1)
-        bpy.context.scene.frame_end(int(last_frame))
+        bpy.context.scene.frame_end = int(last_frame)
         
         return {'FINISHED'}
 
