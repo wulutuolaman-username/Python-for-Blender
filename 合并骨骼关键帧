@@ -1,0 +1,361 @@
+import bpy
+from bpy.props import PointerProperty
+from bpy.types import Operator, Panel
+import os
+
+# 新建字典 MMD_BONES，将序号作为键，骨骼名称作为值
+MMD_BONES = {
+    1: "全ての親",
+    2: "センター",
+    3: "グルーブ",
+    4: "腰",
+    5: "左足IK親",
+    6: "足ＩＫ.L",
+    7: "左つま先ＩＫ",
+    8: "右足IK親",
+    9: "足ＩＫ.R",
+    10: "右つま先ＩＫ",
+    11: "上半身",
+    12: "上半身2",
+    13: "下半身",
+    14: "首",
+    15: "頭",
+    16: "両目",
+    17: "左目",
+    18: "右目",
+    19: "左肩P",
+    20: "肩.L",
+    21: "左肩C",
+    22: "腕.L",
+    23: "ひじ.L",
+    24: "手首.L",
+    25: "ダミー.L",
+    26: "手先.L",
+    27: "親指０.L",
+    28: "親指１.L",
+    29: "親指２.L",
+    30: "左親指先",
+    31: "小指１.L",
+    32: "小指２.L",
+    33: "小指３.L",
+    34: "左小指先",
+    35: "薬指１.L",
+    36: "薬指２.L",
+    37: "薬指３.L",
+    38: "左薬指先",
+    39: "中指１.L",
+    40: "中指２.L",
+    41: "中指３.L",
+    42: "左中指先",
+    43: "人指１.L",
+    44: "人指２.L",
+    45: "人指３.L",
+    46: "左人指先",
+    47: "右肩P",
+    48: "肩.R",
+    49: "右肩C",
+    50: "腕.R",
+    51: "ひじ.R",
+    52: "手首.R",
+    53: "ダミー.R",
+    54: "右手先",
+    55: "親指０.R",
+    56: "親指１.R",
+    57: "親指２.R",
+    58: "右親指先",
+    59: "小指１.R",
+    60: "小指２.R",
+    61: "小指３.R",
+    62: "右小指先",
+    63: "薬指１.R",
+    64: "薬指２.R",
+    65: "薬指３.R",
+    66: "右薬指先",
+    67: "中指１.R",
+    68: "中指２.R",
+    69: "中指３.R",
+    70: "右中指先",
+    71: "人指１.R",
+    72: "人指２.R",
+    73: "人指３.R",
+    74: "右人指先",
+    75: "腰キャンセル左",
+    76: "足.L",
+    77: "ひざ.L",
+    78: "足首.L",
+    79: "左つま先",
+    80: "腰キャンセル右",
+    81: "足.R",
+    82: "ひざ.R",
+    83: "足首.R",
+    84: "右つま先",
+    85: "左足D",
+    86: "左ひざD",
+    87: "左足首D",
+    88: "左足先EX",
+    89: "右足D",
+    90: "右ひざD",
+    91: "右足首D",
+    92: "右足先EX"
+}
+
+# 只对骨骼名字在字典 MMD_BONES 中的进行操作
+
+class OBJECT_OT_MergeKeyframes(Operator):
+    bl_idname = "object.merge_keyframes"
+    bl_label = "合并关键帧"
+    bl_description = "合并两个选择的骨架的关键帧，包括其子级网格的形态键关键帧"
+           
+    def execute(self, context):
+        armature1 = context.scene.armature1
+        armature2 = context.scene.armature2
+        
+        if not armature1 or not armature2:
+            self.report({'ERROR'}, "必须选择两个骨架")
+            return {'CANCELLED'}
+        
+        # 自动获取骨骼的关键帧时间值
+        def get_armature_first_frame(armature):
+            first_frame = float('inf')
+            for bone in armature.pose.bones:  
+                if bone.name in MMD_BONES.values():
+                    action = bone.id_data.animation_data.action
+                    if action:
+                        for fcurve in action.fcurves:
+                            for keyframe_point in fcurve.keyframe_points:
+                                if keyframe_point.co.x < first_frame:
+                                    first_frame = keyframe_point.co.x
+            return first_frame                    
+        
+        def get_armature_first_and_second_frame(armature):
+            first_frame = float('inf')
+            second_frame = float('inf')
+            for bone in armature.pose.bones:  
+                if bone.name in MMD_BONES.values():
+                    action = bone.id_data.animation_data.action
+                    if action:
+                        for fcurve in action.fcurves:
+                            for keyframe_point in fcurve.keyframe_points:
+                                if keyframe_point.co.x < first_frame:
+                                    first_frame = keyframe_point.co.x
+                                elif first_frame < keyframe_point.co.x < second_frame:
+                                    second_frame = keyframe_point.co.x                            
+            return first_frame, second_frame
+        
+        def get_armature_last_frame(armature):
+            last_frame = 0
+            for bone in armature.pose.bones:  
+                if bone.name in MMD_BONES.values():
+                    action = bone.id_data.animation_data.action
+                    if action:
+                        for fcurve in action.fcurves:
+                            for keyframe_point in fcurve.keyframe_points:
+                                if keyframe_point.co.x > last_frame:
+                                    last_frame = keyframe_point.co.x
+            return last_frame
+        
+        # 删除骨架导入动作时的初始姿势关键帧
+        def delete_initial_pose_frame(armature):
+            first_frame, second_frame = get_armature_first_and_second_frame(armature)        
+            if second_frame - first_frame > 1:
+                for bone in armature.pose.bones: 
+                    if bone.name in MMD_BONES.values():
+                        action = bone.id_data.animation_data.action
+                        if action:
+                            for fcurve in action.fcurves:
+                                keyframe_points_to_remove = [kp for kp in fcurve.keyframe_points if kp.co.x == first_frame and kp]
+                                for keyframe_point in keyframe_points_to_remove:
+                                    fcurve.keyframe_points.remove(keyframe_point)
+        delete_initial_pose_frame(armature1)
+        delete_initial_pose_frame(armature2)
+        
+        # 切换到物体模式并选择骨架
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.objects.active = armature1
+        armature1.select_set(True)
+        armature2.select_set(True)
+        
+        # 切换到姿态模式
+        bpy.ops.object.mode_set(mode='POSE')
+                
+        # 调整骨架关键帧时间，减去 first_frame - 1 并加入 frame_restart 集合
+        def frame_restart(armature):
+            first_frame = get_armature_first_frame(armature)
+            if first_frame !=1:
+                frame_restart = set()
+                for bone in armature.pose.bones:  
+                    if bone.name in MMD_BONES.values():
+                        action = bone.id_data.animation_data.action
+                        if action:
+                            for fcurve in action.fcurves:
+                                for keyframe_point in fcurve.keyframe_points:
+                                    if keyframe_point.co.x != 1 and keyframe_point not in frame_restart:
+                                        keyframe_point.co.x -= (first_frame - 1)
+                                        frame_restart.add(keyframe_point)
+            return first_frame                        
+        
+        frame_restart(armature1)
+        first_frame_1 = frame_restart(armature1)
+        frame_restart(armature2) 
+        first_frame_2 = frame_restart(armature2)
+        
+        # 遍历第二个骨架的所有动作曲线并右移关键帧时间
+        moved = set()
+        if first_frame_2 == 1:
+            last_frame_1 = get_armature_last_frame(armature1)
+            last_frame_1 -= (first_frame_1 - 1)            
+            last_frame_2 = get_armature_last_frame(armature2)
+            for bone in armature2.pose.bones:  
+                if bone.name in MMD_BONES.values():
+                    action = bone.id_data.animation_data.action
+                    if action:
+                        for fcurve in action.fcurves:
+                            for keyframe_point in fcurve.keyframe_points:
+                                if keyframe_point.co.x <= last_frame_2 and keyframe_point not in moved:
+                                    keyframe_point.co.x += (last_frame_1 - 1)
+                                    moved.add(keyframe_point)
+
+        # 设置当前帧到 last_frame_1 并读取 armature1 的变换属性和关键帧
+        bpy.context.scene.frame_set(int(last_frame_1))
+        armature1_transforms = {}
+        for bone in armature1.pose.bones:  
+            if bone.name in MMD_BONES.values():
+                bone_transform1 = {
+                    'name': bone.name,
+                    'location': bone.location.copy(),
+                    'rotation_quaternion': bone.rotation_quaternion.copy(),
+                    'keyframes': []  # 存储关键帧信息
+                }
+                action = bone.id_data.animation_data.action
+                if action:
+                    for fcurve in action.fcurves:
+                        for keyframe_point in fcurve.keyframe_points:
+                            bone_transform1['keyframes'].append({
+                                'frame': keyframe_point.co.x,
+                                'value': keyframe_point.co.y,
+                                'data_path': fcurve.data_path,
+                                'array_index': fcurve.array_index
+                            })
+                armature1_transforms[bone.name] = bone_transform1
+
+        # 设置当前帧到 first_frame_2 并读取 armature2 的变换属性和关键帧
+        bpy.context.scene.frame_set(int(first_frame_2))
+        armature2_transforms = {}
+        for bone in armature2.pose.bones:  
+            if bone.name in MMD_BONES.values():
+                bone_transform2 = {
+                    'name': bone.name,
+                    'location': bone.location.copy(),
+                    'rotation_quaternion': bone.rotation_quaternion.copy(),
+                    'keyframes': []  # 存储关键帧信息
+                }
+                action = bone.id_data.animation_data.action
+                if action:
+                    for fcurve in action.fcurves:
+                        for keyframe_point in fcurve.keyframe_points:
+                            bone_transform2['keyframes'].append({
+                                'frame': keyframe_point.co.x,
+                                'value': keyframe_point.co.y,
+                                'data_path': fcurve.data_path,
+                                'array_index': fcurve.array_index
+                            })
+                armature2_transforms[bone.name] = bone_transform2
+
+        # 计算前减去后的数值
+        transforms_diff = {}
+        for bone_name in armature1_transforms.keys():
+            diff_transform = {
+                'diff_location_x': armature1_transforms[bone_name]['location'].x - armature2_transforms[bone_name]['location'].x,
+                'diff_location_y': armature1_transforms[bone_name]['location'].y - armature2_transforms[bone_name]['location'].y,
+                'diff_location_z': armature1_transforms[bone_name]['location'].z - armature2_transforms[bone_name]['location'].z,
+                'diff_rotation_quaternion_w': armature1_transforms[bone_name]['rotation_quaternion'].w - armature2_transforms[bone_name]['rotation_quaternion'].w,
+                'diff_rotation_quaternion_x': armature1_transforms[bone_name]['rotation_quaternion'].x - armature2_transforms[bone_name]['rotation_quaternion'].x,
+                'diff_rotation_quaternion_y': armature1_transforms[bone_name]['rotation_quaternion'].y - armature2_transforms[bone_name]['rotation_quaternion'].y,
+                'diff_rotation_quaternion_z': armature1_transforms[bone_name]['rotation_quaternion'].z - armature2_transforms[bone_name]['rotation_quaternion'].z
+            }
+            transforms_diff[bone_name] = diff_transform
+ 
+        # 初始化一个字典来存储已经调整过的骨骼
+        corrected_bones = set()
+        # 在曲线编辑器中，骨架2按骨骼名稱和變換類型加上這些差值，重新赋值位置 xyz 和旋轉 wxyz ，直接插入骨架1的关键帧               
+        for num in MMD_BONES.keys():
+            bone_name = MMD_BONES[num]
+            if bone_name in armature1.pose.bones:
+                bone1 = armature1.pose.bones[bone_name]
+                if bone_name in armature2.pose.bones:
+                    bone2 = armature2.pose.bones[bone_name]
+                    if bone1 not in corrected_bones:
+                        action = bone2.id_data.animation_data.action
+                        if action:
+                            # 建立字典 frames，以 keyframe_point.co.x 为键，keyframe_point 为值
+                            frames = {keyframe_point.co.x: keyframe_point for keyframe_point in fcurve.keyframe_points}
+                            # 按照 keyframe_point.co.x 的大小对 frames 进行排序
+                            sorted_frames = sorted(frames.items(), key=lambda x: x[0])
+                            # 遍历排序后的 frames
+                            for x, keyframe_point in sorted_frames:
+                                bpy.context.scene.frame_set(int(x))
+                            
+                                bone2.location.x += transforms_diff[bone_name]['diff_location_x']
+                                bone2.location.y += transforms_diff[bone_name]['diff_location_y']
+                                bone2.location.z += transforms_diff[bone_name]['diff_location_z']
+                                bone1.location = bone2.location
+                                bone1.keyframe_insert(data_path="location")
+                                                                
+                                bone2.rotation_quaternion.w += transforms_diff[bone_name]['diff_rotation_quaternion_w']
+                                bone2.rotation_quaternion.x += transforms_diff[bone_name]['diff_rotation_quaternion_x']
+                                bone2.rotation_quaternion.y += transforms_diff[bone_name]['diff_rotation_quaternion_y']
+                                bone2.rotation_quaternion.z += transforms_diff[bone_name]['diff_rotation_quaternion_z']
+                                bone1.rotation_quaternion = bone2.rotation_quaternion
+                                bone1.keyframe_insert(data_path="rotation_quaternion")
+                                                
+                        corrected_bones.add(bone1)
+        
+        # 根据MMD_BONES隐藏骨骼
+        for bone in armature1.pose.bones:  
+            if bone.name not in MMD_BONES.values():
+                bone.bone.hide = True
+        
+        # 重置场景结束帧
+        get_armature_last_frame(armature1)
+        last_frame = get_armature_last_frame(armature1)
+        bpy.context.scene.frame_end(int(last_frame))
+        
+        return {'FINISHED'}
+
+class OBJECT_PT_MergeKeyframesPanel(Panel):
+    bl_idname = "OBJECT_PT_MergeKeyframesPanel"
+    bl_label = "合并关键帧"
+    bl_category = "骨骼关键帧"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+    
+        layout.prop(scene, "armature1", icon='ARMATURE_DATA')
+        layout.prop(scene, "armature2", icon='ARMATURE_DATA')
+        layout.operator("object.merge_keyframes", icon='POSE_HLT')
+        
+def register():
+    bpy.utils.register_class(OBJECT_OT_MergeKeyframes)
+    bpy.utils.register_class(OBJECT_PT_MergeKeyframesPanel)
+    bpy.types.Scene.armature1 = PointerProperty(
+        name="骨架1",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'ARMATURE'
+    )
+    bpy.types.Scene.armature2 = PointerProperty(
+        name="骨架2",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'ARMATURE'
+    )
+
+def unregister():
+    bpy.utils.unregister_class(OBJECT_OT_MergeKeyframes)
+    bpy.utils.unregister_class(OBJECT_PT_MergeKeyframesPanel)
+    del bpy.types.Scene.armature1
+    del bpy.types.Scene.armature2
+
+if __name__ == "__main__":
+    register()
