@@ -1,0 +1,94 @@
+import bpy
+
+# 去掉节点组名称中的 "actual_"
+def remove_actual_prefix(node_tree):
+    while node_tree:
+        for node in node_tree.nodes:
+            if node.type == 'GROUP':
+                node_group = node.node_tree
+                if node_group.name.startswith("actual_"):
+                    node_group.name = node_group.name[len("actual_"):]
+
+        # 获取下一级节点组
+        node_tree = next((n.node_tree for n in node_tree.nodes if n.type == 'GROUP'), None)
+
+# 替换节点组的函数
+def replace_nodes(node_tree):
+    while node_tree:
+        for node in node_tree.nodes:
+            if node.type == 'GROUP':
+                node_group = node.node_tree
+                if node_group and node_group.name[-3:].isdigit():
+                    new_name = node_group.name[:-4]
+                    new_node_group = bpy.data.node_groups.get(new_name)
+                    if new_node_group:
+                        node.node_tree = new_node_group
+
+        # 获取下一级节点组
+        node_tree = next((n.node_tree for n in node_tree.nodes if n.type == 'GROUP'), None)
+
+# 替换图像的函数
+def replace_images(node_tree):
+    while node_tree:
+        for node in node_tree.nodes:
+            if node.type == 'TEX_IMAGE':
+                image = node.image
+                if image and image.name[-3:].isdigit():
+                    new_name = image.name[:-4]
+                    new_image = bpy.data.images.get(new_name)
+                    if new_image:
+                        node.image = new_image
+
+        # 获取下一级节点组
+        node_tree = next((n.node_tree for n in node_tree.nodes if n.type == 'GROUP'), None)
+
+# 替换材质的函数
+def replace_materials():
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            for i, material in enumerate(obj.data.materials):
+                if material and material.name[-3:].isdigit():
+                    new_name = material.name[:-4]
+                    new_material = bpy.data.materials.get(new_name)
+                    if new_material:
+                        obj.data.materials[i] = new_material
+
+# 获取所有节点组并去掉名称中的 "actual_"
+for node_group in bpy.data.node_groups:
+    if node_group.name.startswith("actual_"):
+        node_group.name = node_group.name[len("actual_"):]
+
+# 替换材质名称
+replace_materials()
+
+# 循环运行五次
+for _ in range(5):
+    # 获取所有材质
+    materials = bpy.data.materials
+    # 遍历每个材质
+    for material in materials:
+        if material.node_tree:
+            node_tree = material.node_tree
+            # 替换节点组
+            replace_nodes(node_tree)
+            # 替换图像
+            replace_images(node_tree)
+
+    # 清除孤立数据
+    bpy.ops.outliner.orphans_purge()
+
+    # 处理节点组名称含有小数点的情况
+    for node_group in bpy.data.node_groups:
+        name_parts = node_group.name.split('.')
+        if len(name_parts) > 1 and len(name_parts[-1]) > 0 and name_parts[-1].isdigit():
+            new_name = '.'.join(name_parts[:-1])
+            node_group.name = new_name
+
+    # 处理图像名称含有小数点的情况
+    for image in bpy.data.images:
+        if '.' in image.name:
+            new_name = image.name.split('.')[0]
+            image.name = new_name
+
+ # 清除孤立数据
+    bpy.ops.outliner.orphans_purge()
